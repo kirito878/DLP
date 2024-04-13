@@ -14,7 +14,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-
+result_mask/
 lib/
 lib64/
 parts/

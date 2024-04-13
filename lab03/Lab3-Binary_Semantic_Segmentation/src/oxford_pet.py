@@ -2,10 +2,11 @@ import os
 import torch
 import shutil
 import numpy as np
-
+from torchvision import transforms
 from PIL import Image
 from tqdm import tqdm
 from urllib.request import urlretrieve
+
 
 class OxfordPetDataset(torch.utils.data.Dataset):
     def __init__(self, root, mode="train", transform=None):
@@ -17,7 +18,8 @@ class OxfordPetDataset(torch.utils.data.Dataset):
         self.transform = transform
 
         self.images_directory = os.path.join(self.root, "images")
-        self.masks_directory = os.path.join(self.root, "annotations", "trimaps")
+        self.masks_directory = os.path.join(
+            self.root, "annotations", "trimaps")
 
         self.filenames = self._read_split()  # read train/valid/test splits
 
@@ -86,9 +88,12 @@ class SimpleOxfordPetDataset(OxfordPetDataset):
         sample = super().__getitem__(*args, **kwargs)
 
         # resize images
-        image = np.array(Image.fromarray(sample["image"]).resize((256, 256), Image.BILINEAR))
-        mask = np.array(Image.fromarray(sample["mask"]).resize((256, 256), Image.NEAREST))
-        trimap = np.array(Image.fromarray(sample["trimap"]).resize((256, 256), Image.NEAREST))
+        image = np.array(Image.fromarray(
+            sample["image"]).resize((256, 256), Image.BILINEAR))
+        mask = np.array(Image.fromarray(
+            sample["mask"]).resize((256, 256), Image.NEAREST))
+        trimap = np.array(Image.fromarray(
+            sample["trimap"]).resize((256, 256), Image.NEAREST))
 
         # convert to other format HWC -> CHW
         sample["image"] = np.moveaxis(image, -1, 0)
@@ -128,10 +133,37 @@ def extract_archive(filepath):
     if not os.path.exists(dst_dir):
         shutil.unpack_archive(filepath, extract_dir)
 
+
+def data_preprocess(**sample):
+    for key in sample.keys():
+        image = sample[key]
+        image = Image.fromarray(image)
+        transform = transforms.Compose([
+            transforms.Resize((256, 256)),
+            transforms.ToTensor(),
+        ])
+        image = transform(image)
+        sample[key] = image
+    return sample
+
+
 def load_dataset(data_path, mode):
     # implement the load dataset function here
-
-    return NotImplemented
+    transform = data_preprocess
+    dataset = OxfordPetDataset(
+        root=data_path, mode=mode, transform=transform)
+    return dataset
 
 # OxfordPetDataset.download("/home/wujh1123/DLP/lab03/Lab3-Binary_Semantic_Segmentation/dataset")
 
+
+if __name__ == "__main__":
+    train_data = load_dataset(
+        '/home/wujh1123/DLP/lab03/Lab3-Binary_Semantic_Segmentation/dataset', 'train')
+    print(len(train_data))
+    valid_data = load_dataset(
+        '/home/wujh1123/DLP/lab03/Lab3-Binary_Semantic_Segmentation/dataset', 'valid')
+    print(len(valid_data))
+    test_data = load_dataset(
+        '/home/wujh1123/DLP/lab03/Lab3-Binary_Semantic_Segmentation/dataset', 'test')
+    print(len(test_data))
