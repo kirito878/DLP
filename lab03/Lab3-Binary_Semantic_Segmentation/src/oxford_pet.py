@@ -154,16 +154,16 @@ def load_dataset(data_path, mode):
         root=data_path, mode=mode, transform=transform)
     return dataset
 
-# OxfordPetDataset.download("/home/wujh1123/DLP/lab03/Lab3-Binary_Semantic_Segmentation/dataset")
+# OxfordPetDataset.download("/home/wujh1123/DLP/lab03/Lab3-Binary_Semantic_Segmentation/dataset/oxford-iiit-pet")
 
 
 if __name__ == "__main__":
     train_data = load_dataset(
-        '/home/wujh1123/DLP/lab03/Lab3-Binary_Semantic_Segmentation/dataset', 'train')
+        '/home/wujh1123/DLP/lab03/Lab3-Binary_Semantic_Segmentation/dataset/oxford-iiit-pet', 'train')
     print(len(train_data))
     valid_data = load_dataset(
-        '/home/wujh1123/DLP/lab03/Lab3-Binary_Semantic_Segmentation/dataset', 'valid')
+        '/home/wujh1123/DLP/lab03/Lab3-Binary_Semantic_Segmentation/dataset/oxford-iiit-pet', 'valid')
     print(len(valid_data))
     test_data = load_dataset(
-        '/home/wujh1123/DLP/lab03/Lab3-Binary_Semantic_Segmentation/dataset', 'test')
+        '/home/wujh1123/DLP/lab03/Lab3-Binary_Semantic_Segmentation/dataset/oxford-iiit-pet', 'test')
     print(len(test_data))
