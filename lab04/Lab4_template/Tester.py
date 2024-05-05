@@ -78,7 +78,7 @@ class Test_model(VAE_Model):
             norm_layer = nn.InstanceNorm2d
         elif self.args.norm == "Group":
             def get_group_norm(num_channels):
-                return nn.GroupNorm(num_channels=num_channels,num_groups=2)
+                return nn.GroupNorm(num_channels=num_channels,num_groups=1)
             norm_layer = get_group_norm
         else:
             raise ValueError("norm layer error")        
@@ -135,19 +135,17 @@ class Test_model(VAE_Model):
         label_list = []
 
         # TODO
-        last_human_feat = self.frame_transformation(img[0])
-        first_templete = last_human_feat.clone()
-        out = img[0]
+        current_frame = img[0]
+
         
         for i in range(1, self.val_vi_len):
+
             z = torch.cuda.FloatTensor(1, self.args.N_dim, self.args.frame_H, self.args.frame_W).normal_()
-            label_feat = self.label_transformation(label[i])
-            human_feat_hat = self.frame_transformation(out)
-            
-            parm = self.Decoder_Fusion(human_feat_hat, label_feat, z)    
-            out = self.Generator(parm)
-            
-            decoded_frame_list.append(out.cpu())
+            encode_pose_next = self.label_transformation(label[i])
+            encode_frame_current = self.frame_transformation(current_frame)
+            decode_feature = self.Decoder_Fusion(encode_frame_current, encode_pose_next, z)    
+            next_predicted_frame = self.Generator(decode_feature)
+            decoded_frame_list.append(next_predicted_frame.cpu())
             label_list.append(label[i].cpu())        
         # raise NotImplementedError
             

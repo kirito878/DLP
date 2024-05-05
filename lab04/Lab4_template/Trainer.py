@@ -42,7 +42,10 @@ class kl_annealing():
         self.kl_anneal_cycle = args.kl_anneal_cycle
         self.kl_anneal_ratio = args.kl_anneal_ratio
         self.current_epoch = current_epoch
-        self.beta = 0.01
+        if self.kl_anneal_type == "None":
+            self.beta = self.kl_anneal_ratio
+        else:
+            self.beta = 0.05
         # raise NotImplementedError
 
     def update(self):
@@ -54,7 +57,7 @@ class kl_annealing():
         elif self.kl_anneal_type == "Monotonic":
             beta = (self.current_epoch/self.kl_anneal_cycle) * \
                 self.kl_anneal_ratio
-            self.beta = min(beta, 1)
+            self.beta = min(beta, self.kl_anneal_ratio)
         # raise NotImplementedError
 
     def get_beta(self):
@@ -85,7 +88,7 @@ class VAE_Model(nn.Module):
             norm_layer = nn.InstanceNorm2d
         elif self.args.norm == "Group":
             def get_group_norm(num_channels):
-                return nn.GroupNorm(num_channels=num_channels,num_groups=4)
+                return nn.GroupNorm(num_channels=num_channels, num_groups=2)
             norm_layer = get_group_norm
         else:
             raise ValueError("norm layer error")
@@ -119,11 +122,29 @@ class VAE_Model(nn.Module):
     def forward(self, img, label):
         pass
 
+    def plot(self, epoch_list, target_list, Title, Target_name, save_name, per_frame=False):
+        plt.plot(epoch_list, target_list, linestyle='-')
+        plt.title(Title)
+        if per_frame == True:
+            x_name = "Index"
+        else:
+            x_name = "Epochs"
+        plt.xlabel(x_name)
+        plt.ylabel(Target_name)
+        path = os.path.join(self.args.save_root, f"{save_name}_curve.png")
+        plt.savefig(path)
+        print(f"Success save graph to {path}")
+        plt.close()
+
     def training_stage(self):
+        epoch_list = []
+        tfr_list = []
+        beta_list = []
+        loss_list = []
         for i in range(self.args.num_epoch):
             train_loader = self.train_dataloader()
             adapt_TeacherForcing = True if random.random() < self.tfr else False
-
+            total_loss = 0
             for (img, label) in (pbar := tqdm(train_loader, ncols=120)):
                 img = img.to(self.args.device)
                 label = label.to(self.args.device)
@@ -136,16 +157,27 @@ class VAE_Model(nn.Module):
                 else:
                     self.tqdm_bar('train [TeacherForcing: OFF, {:.1f}], beta: {}'.format(
                         self.tfr, beta), pbar, loss.detach().cpu(), lr=self.scheduler.get_last_lr()[0])
-
+                total_loss += loss.detach().cpu()
             if self.current_epoch % self.args.per_save == 0:
                 self.save(os.path.join(self.args.save_root,
                           f"epoch={self.current_epoch}.ckpt"))
+
+            epoch_list.append(self.current_epoch)
+            tfr_list.append(self.tfr)
+            beta_list.append(self.kl_annealing.get_beta())
+            loss_list.append(total_loss/len(train_loader))
 
             self.eval()
             self.current_epoch += 1
             self.scheduler.step()
             self.teacher_forcing_ratio_update()
             self.kl_annealing.update()
+
+        self.plot(epoch_list, tfr_list,
+                  "Teacher Forcing Ratio", "Ratio", "tfr")
+        self.plot(epoch_list, beta_list, self.kl_annealing.kl_anneal_type,
+                  "Beta", f"{self.kl_annealing.kl_anneal_type}_beta")
+        self.plot(epoch_list, loss_list, "Loss Curve", "Loss", "loss")
 
     @torch.no_grad()
     def eval(self):
@@ -169,27 +201,31 @@ class VAE_Model(nn.Module):
         loss_kl = 0.0
         next_predicted_frame = img[:, 0]
         for i in range(self.train_vi_len-1):
+            # pose
             current_pose = label[:, i]
             next_pose = label[:, i+1]
 
+            # frame
             current_frame = next_predicted_frame
-            next_frame = img[:, i+1]
             if adapt_TeacherForcing:
                 current_frame = img[:, i]
+            next_frame = img[:, i+1]
 
+            # part kl loss
             encode_frame_next = self.frame_transformation(next_frame)
             encode_pose_next = self.label_transformation(next_pose)
             z, mu, logvar = self.Gaussian_Predictor(
                 encode_frame_next, encode_pose_next)
             loss_kl += kl_criterion(mu, logvar, self.batch_size)
 
+            # part mse loss
             encode_frame_current = self.frame_transformation(current_frame)
             decode_feature = self.Decoder_Fusion(
                 encode_frame_current, encode_pose_next, z)
             next_predicted_frame = self.Generator(decode_feature)
             loss_mse += self.mse_criterion(next_predicted_frame, next_frame)
 
-            beta = self.kl_annealing.get_beta()
+        beta = self.kl_annealing.get_beta()
         loss_sum = loss_mse + beta*loss_kl
         loss_sum.backward()
         self.optimizer_step()
@@ -207,12 +243,11 @@ class VAE_Model(nn.Module):
 
         loss_mse = 0
         next_predicted_frame = img[:, 0]
-        frame_predict_list = []
         psnr_total = 0
-        index_list = []
         psnr_list = []
-
+        iteration = []
         for i in range(self.val_vi_len-1):
+
             current_pose = label[:, i]
             next_pose = label[:, i+1]
 
@@ -224,25 +259,21 @@ class VAE_Model(nn.Module):
 
             z = torch.cuda.FloatTensor(
                 1, self.args.N_dim, self.args.frame_H, self.args.frame_W).normal_().to(self.args.device)
+
             decode_feature = self.Decoder_Fusion(
                 encode_frame_current, encode_pose_next, z)
             next_predicted_frame = self.Generator(decode_feature)
+
             loss_mse += self.mse_criterion(next_predicted_frame, next_frame)
 
             psnr_per_frame = Generate_PSNR(
                 next_predicted_frame, next_frame).item()
             psnr_total += psnr_per_frame
-
-            if self.args.test:
-                index_list.append(i)
-                psnr_list.append(psnr_per_frame)
-
-            if (self.current_epoch == self.args.num_epoch) or self.args.test:
-                frame_predict_list.append(next_predicted_frame[0])
-        print("\nAVG PSNR: ", psnr_total / self.val_vi_len)
-        if (self.current_epoch == self.args.num_epoch) or self.args.test:
-            self.make_gif(next_predicted_frame, os.path.join(
-                self.args.save_root, f"epoch={self.current_epoch}_val.gif"))
+            iteration.append(i)
+            psnr_list.append(psnr_per_frame)
+        print(f"\nAverage PSNR: {psnr_total / self.val_vi_len:.5f}")
+        self.plot(iteration, psnr_list, "PSNR-per frame",
+                  "PSNR", "psnr", per_frame=True)
         return loss_mse
         # raise NotImplementedError
 
@@ -289,8 +320,7 @@ class VAE_Model(nn.Module):
     def teacher_forcing_ratio_update(self):
         # TODO
         if self.current_epoch >= self.tfr_sde:
-            tmp_tfr = self.tfr
-            tmp_tfr -= 1 / (self.args.num_epoch - self.tfr_sde)
+            tmp_tfr = self.tfr-self.tfr_d_step
             self.tfr = max(tmp_tfr, 0)
         # raise NotImplementedError
 
@@ -360,7 +390,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_workers',   type=int, default=4)
     parser.add_argument('--num_epoch',     type=int,
                         default=70,     help="number of total epoch")
-    parser.add_argument('--per_save',      type=int, default=3,
+    parser.add_argument('--per_save',      type=int, default=1,
                         help="Save checkpoint every seted epoch")
     parser.add_argument('--partial',       type=float, default=1.0,
                         help="Part of the training dataset to be trained")
