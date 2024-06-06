@@ -164,3 +164,6 @@ LAB4_Dataset
 *.ckpt
 *.gif
 *.csv
+*.png
+*.pth
+*.pt
