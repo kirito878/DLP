@@ -8,18 +8,14 @@ import torch.utils.data
 import torchvision.transforms as transforms
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
+from diffusers import DDPMScheduler, UNet2DModel
 import json
+from tqdm import tqdm
 import torchvision.utils as vutils
 import cv2
 from PIL import Image
 import evaluator
-transform = transforms.Compose([
-    transforms.Resize((64, 64)),
-    transforms.ToTensor(),
-    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-])
-
-
+import ddpm
 
 
 class iclevr_dataset(Dataset):
@@ -45,50 +41,11 @@ class iclevr_dataset(Dataset):
         return torch.tensor(one_hot_array, dtype=torch.float32)
 
 
-class Generator(nn.Module):
-    def __init__(self, nz, ngf, nc, num_classes):
-        super(Generator, self).__init__()
-        self.embedding = nn.Linear(num_classes, nz)
-        self.main = nn.Sequential(
-            # input is Z, going into a convolution
-            nn.ConvTranspose2d(nz+nz, ngf * 8, 4, 1, 0, bias=False),
-            nn.BatchNorm2d(ngf * 8),
-            nn.ReLU(True),
-            # state size. ``(ngf*8) x 4 x 4``
-            nn.ConvTranspose2d(ngf * 8, ngf * 4, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ngf * 4),
-            nn.ReLU(True),
-            # state size. ``(ngf*4) x 8 x 8``
-            nn.ConvTranspose2d(ngf * 4, ngf * 2, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ngf * 2),
-            nn.ReLU(True),
-            # state size. ``(ngf*2) x 16 x 16``
-            nn.ConvTranspose2d(ngf * 2, ngf, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ngf),
-            nn.ReLU(True),
-            # state size. ``(ngf) x 32 x 32``
-            nn.ConvTranspose2d(ngf, nc, 4, 2, 1, bias=False),
-            nn.Tanh()
-            # state size. ``(nc) x 64 x 64``
-        )
-
-    def forward(self, noise, labels):
-        labels = self.embedding(labels)
-        labels = labels.unsqueeze(-1).unsqueeze(-1)
-        input = torch.cat((noise, labels), dim=1)
-
-        return self.main(input)
-
-
-
-
 def main(args):
 
     device = args.device
     obj_file = args.obj_file
-    nc = 3
-    nz = 100
-    ngf = 256
+    num_train_timestamps = 1000
 
     with open(obj_file, 'r') as f:
         objects = json.load(f)
@@ -96,52 +53,66 @@ def main(args):
 
     test_one = "/home/wujh1123/DLP/lab06/test.json"
     with open(test_one, 'r') as f:
-        test_object = json.load(f) 
+        test_object = json.load(f)
     batch_size = len(test_object)
     dataset = iclevr_dataset(test_object=test_object, objects=objects)
     data_loader = DataLoader(
         dataset, batch_size=batch_size, shuffle=False)
-    netG = Generator(nz, ngf, nc, num_classes).to(device)
-    netG.load_state_dict(torch.load(args.netG))
-    noise = torch.randn(batch_size, nz, 1, 1, device=device)  # 生成噪聲
+    ddpm_model = ddpm.Unet(num_classes=num_classes).to(device)
+    ddpm_model.load_state_dict(torch.load(os.path.join(args.ckpt_path,"ddpm.pth")))
+    noise_scheduler = DDPMScheduler(
+        num_train_timesteps=num_train_timestamps, beta_schedule='squaredcos_cap_v2')
     with torch.no_grad():
         for i, labels in enumerate(data_loader):
             labels = labels.to(device)
-            fake_images = netG(noise, labels)
+            x = torch.randn(batch_size, 3, 64, 64).to(device)
+            for j, t in tqdm(enumerate(noise_scheduler.timesteps)):
+
+                pred_noise = ddpm_model(x, t, labels)
+                x = noise_scheduler.step(pred_noise, t, x).prev_sample
             eval_model = evaluator.evaluation_model()
-            accuracy = eval_model.eval(fake_images, labels)
+
+            accuracy = eval_model.eval(x.detach(), labels)
             print(f"test Accuracy: {accuracy}")
-            img_grid = vutils.make_grid(fake_images.detach().cpu(), padding=2, normalize=True)
+            img_grid = vutils.make_grid(
+                x.detach().cpu(), padding=2, normalize=True)
             # Convert the image grid to a NumPy array and save using OpenCV
             img_np = img_grid.numpy().transpose((1, 2, 0))  # Convert from CHW to HWC
             img_np = (img_np * 255).astype(np.uint8)  # Denormalize to 0-255
             # Convert RGB to BGR for OpenCV
             img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-            cv2.imwrite(f'gan_test.png', img_np)
+            cv2.imwrite(f'ddpm_test.png', img_np)
     test_one = "/home/wujh1123/DLP/lab06/new_test.json"
     with open(test_one, 'r') as f:
-        test_object = json.load(f) 
+        test_object = json.load(f)
     batch_size = len(test_object)
     dataset = iclevr_dataset(test_object=test_object, objects=objects)
     data_loader = DataLoader(
         dataset, batch_size=batch_size, shuffle=False)
-    netG = Generator(nz, ngf, nc, num_classes).to(device)
-    netG.load_state_dict(torch.load(args.netG))
-    noise = torch.randn(batch_size, nz, 1, 1, device=device)  # 生成噪聲
+    ddpm_model = ddpm.Unet(num_classes=num_classes).to(device)
+    ddpm_model.load_state_dict(torch.load(os.path.join(args.ckpt_path,"ddpm.pth")))
+    noise_scheduler = DDPMScheduler(
+        num_train_timesteps=num_train_timestamps, beta_schedule='squaredcos_cap_v2')
     with torch.no_grad():
         for i, labels in enumerate(data_loader):
             labels = labels.to(device)
-            fake_images = netG(noise, labels)
+            x = torch.randn(batch_size, 3, 64, 64).to(device)
+            for j, t in tqdm(enumerate(noise_scheduler.timesteps)):
+
+                pred_noise = ddpm_model(x, t, labels)
+                x = noise_scheduler.step(pred_noise, t, x).prev_sample
             eval_model = evaluator.evaluation_model()
-            accuracy = eval_model.eval(fake_images, labels)
-            print(f"new test Accuracy: {accuracy}")
-            img_grid = vutils.make_grid(fake_images.detach().cpu(), padding=2, normalize=True)
+
+            accuracy = eval_model.eval(x.detach(), labels)
+            print(f"test Accuracy: {accuracy}")
+            img_grid = vutils.make_grid(
+                x.detach().cpu(), padding=2, normalize=True)
             # Convert the image grid to a NumPy array and save using OpenCV
             img_np = img_grid.numpy().transpose((1, 2, 0))  # Convert from CHW to HWC
             img_np = (img_np * 255).astype(np.uint8)  # Denormalize to 0-255
             # Convert RGB to BGR for OpenCV
             img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-            cv2.imwrite(f'gan_new_test.png', img_np)
+            cv2.imwrite(f'ddpm_new_test.png', img_np)
 
 
 if __name__ == '__main__':
@@ -154,7 +125,7 @@ if __name__ == '__main__':
                         help='batch_size')
     parser.add_argument('--epochs', type=int, default=100,
                         help='epochs')
-    parser.add_argument('--netG', type=str, default="/home/wujh1123/DLP/lab06/weight/netG.pth",
-                        help='netG weight')
+    parser.add_argument('--ckpt_path', "-c", type=str, default="/home/wujh1123/DLP/lab06/weight",
+                        help='ddpm weight')
     args = parser.parse_args()
     main(args)
