@@ -133,8 +133,6 @@ class Discriminator(nn.Module):
         x = self.main(input)
         class_x = x.clone()
         adv_output = self.adv_output(x)
-        # import ipdb
-        # ipdb.set_trace()
         class_x = self.pool(class_x)
         class_x = class_x.view(labels.size(0), -1)
 
@@ -206,8 +204,6 @@ def main(args):
                 # Train Discriminator
                 netD.zero_grad()
                 adv_output, class_output = netD(real_images, labels)
-                # print(real_labels.shape)
-                # print("output",output.shape)
                 errD_real = criterion(
                     adv_output, real_labels) + class_criterion(class_output, labels) * args.class_weight
                 errD_real.backward()
