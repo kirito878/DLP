@@ -175,10 +175,16 @@ def main(args):
         train_dataset, batch_size=batch_size, shuffle=True)
 
     netG = Generator(nz, ngf, nc, num_classes).to(device)
-    netG.apply(weights_init)
+    
 
     netD = Discriminator(ndf, nc, num_classes).to(device)
-    netD.apply(weights_init)
+    if args.resume:
+        netG.load_state_dict(torch.load(os.path.join(args.load_ckpt, "netG.pth")))
+        netD.load_state_dict(torch.load(os.path.join(args.load_ckpt, "netD.pth")))
+        print("resume training")
+    else:
+        netG.apply(weights_init)
+        netD.apply(weights_init)
 
     criterion = nn.BCELoss()
     class_criterion = nn.BCELoss()
@@ -196,7 +202,7 @@ def main(args):
             real_labels = torch.full((batch_size,), 1., device=device)
             fake_labels = torch.full((batch_size,), 0., device=device)
 
-            for step_d in range(1):
+            for step_d in range(3):
                 # Train Discriminator
                 netD.zero_grad()
                 adv_output, class_output = netD(real_images, labels)
@@ -228,8 +234,10 @@ def main(args):
             if i % 50 == 0:
                 print(
                     f'[{epoch}/{num_epochs}][{i}/{len(train_data_loader)}] Loss_D: {errD_real.item() + errD_fake.item()} Loss_G: {errG.item()} ')
-        torch.save(netG.state_dict(), os.path.join(args.ckpt_path, "netG.pth"))
-        torch.save(netD.state_dict(), os.path.join(args.ckpt_path, "netD.pth"))
+        torch.save(netG.state_dict(), os.path.join(args.ckpt_path, f"netG_{epoch}.pth"))
+        torch.save(netD.state_dict(), os.path.join(args.ckpt_path, f"netD_{epoch}.pth"))
+    torch.save(netG.state_dict(), os.path.join(args.ckpt_path, f"netG.pth"))
+    torch.save(netD.state_dict(), os.path.join(args.ckpt_path, "netD.pth"))
 
 
 if __name__ == '__main__':
@@ -250,5 +258,8 @@ if __name__ == '__main__':
                         help='netG weight')
     parser.add_argument('--class_weight', type=int, default=10,
                         help='class weight')
+    parser.add_argument('--load_ckpt', "-l", type=str, default="/home/wujh1123/DLP/lab06/weight",
+                        help='netG weight')
+    parser.add_argument('--resume',         action='store_true')
     args = parser.parse_args()
     main(args)
