@@ -74,11 +74,10 @@ class Unet(nn.Module):
         )
 
     def forward(self, x, t, class_labels):
-        bs, c, w, h = x.shape
+        bs, ch, w, h = x.shape
         labal = class_labels.view(bs, class_labels.shape[1], 1, 1).expand(
             bs, class_labels.shape[1], w, h)
         unet_input = torch.cat((x, labal), 1)
-
         return self.model(unet_input, t).sample
 
 
